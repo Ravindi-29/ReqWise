@@ -1,0 +1,20 @@
+# Local Storage Uploads and Exports
+storage_data/raw_documents/*
+!storage_data/raw_documents/.gitkeep
+storage_data/previews/*
+!storage_data/previews/.gitkeep
+storage_data/exports/*
+!storage_data/exports/.gitkeep
+
+# Build Outputs & Package Caches
+**/target/
+**/dist/
+**/node_modules/
+**/.vite-temp/
+
+# Local database and IDE files
+reqwise_dev_db*
+*.log
+.idea/
+.vscode/
+.DS_Store
