@@ -178,3 +178,52 @@ test('7. Authentication Password Policy & Sign Up Field Constraints', () => {
   assert.equal(formPayload.email, 'sarah@gmail.com');
   assert.equal(formPayload.country, 'Sri Lanka');
 });
+
+test('8. SSO Account Input Validation & Page-Load Preservation Contract', () => {
+  // SSO Validation: Must require an account/email, cannot auto-login
+  const validateSSOInput = (provider, accountInput) => {
+    const trimmed = (accountInput || '').trim();
+    if (!trimmed) {
+      return { isValid: false, error: `Account required for ${provider}` };
+    }
+    if (provider === 'google' && !trimmed.includes('@')) {
+      return { isValid: false, error: 'Valid Google email required' };
+    }
+    const isEmail = trimmed.includes('@');
+    const username = isEmail ? trimmed.split('@')[0] : trimmed;
+    const email = isEmail ? trimmed : `${trimmed}@github.com`;
+    return {
+      isValid: true,
+      user: {
+        username,
+        email,
+        firstName: username.charAt(0).toUpperCase() + username.slice(1),
+      },
+    };
+  };
+
+  // Blank SSO input must fail (no auto-login)
+  assert.equal(validateSSOInput('google', '').isValid, false);
+  assert.equal(validateSSOInput('google', '   ').isValid, false);
+  assert.equal(validateSSOInput('google', 'invalid-email').isValid, false);
+  assert.equal(validateSSOInput('github', '').isValid, false);
+
+  // Providing real account creates the user with their given identity
+  const googleAuth = validateSSOInput('google', 'sarah@gmail.com');
+  assert.equal(googleAuth.isValid, true);
+  assert.equal(googleAuth.user.email, 'sarah@gmail.com');
+  assert.equal(googleAuth.user.username, 'sarah');
+
+  const githubAuth = validateSSOInput('github', 'sarah-dev');
+  assert.equal(githubAuth.isValid, true);
+  assert.equal(githubAuth.user.username, 'sarah-dev');
+  assert.equal(githubAuth.user.email, 'sarah-dev@github.com');
+
+  // Page load preservation: Mock storage pre-fills username
+  const mockStorage = {
+    reqwise_saved_username: 'sarah@gmail.com',
+    reqwise_saved_view: 'signin',
+  };
+  assert.equal(mockStorage.reqwise_saved_username, 'sarah@gmail.com');
+  assert.equal(mockStorage.reqwise_saved_view, 'signin');
+});

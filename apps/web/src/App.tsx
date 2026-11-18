@@ -11,17 +11,8 @@ import { Workspace, Project, Document, DocumentVersion, AuthUser } from './types
 import { Sparkles, FileText, ArrowRight, Upload } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
-    const saved = localStorage.getItem('reqwise_auth_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  });
+  // Always display Sign In or Sign Up portal on page load/refresh, preserving what the user did before in AuthPage
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
