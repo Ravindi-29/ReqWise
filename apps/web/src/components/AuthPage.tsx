@@ -79,6 +79,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
   const [ssoPasswordInput, setSsoPasswordInput] = useState('');
   const [ssoError, setSsoError] = useState('');
 
+  // Password Reset Modal State
+  const [resetModal, setResetModal] = useState(false);
+  const [resetAccountInput, setResetAccountInput] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetError, setResetError] = useState('');
+
   // Sync draft inputs to localStorage so what the user did before is always saved
   useEffect(() => {
     if (signinUsername) {
@@ -110,6 +117,78 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     special: /[*#\-_@!$%^&+=?]/.test(signupPassword),
   };
 
+  const openResetModal = (initialAccount?: string) => {
+    setResetAccountInput(initialAccount || signinUsername || '');
+    setResetNewPassword(signinPassword || '');
+    setResetError('');
+    setResetModal(true);
+  };
+
+  const handleResetSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError('');
+
+    const target = resetAccountInput.trim();
+    const cleanTarget = target.toLowerCase();
+    const newPass = resetNewPassword.trim();
+
+    if (!target) {
+      setResetError('Please enter your username or email.');
+      return;
+    }
+    if (!newPass) {
+      setResetError('Please enter a new password.');
+      return;
+    }
+    if (newPass.length < 6) {
+      setResetError('Password must be at least 6 characters.');
+      return;
+    }
+
+    const registered = getRegisteredUsers();
+    const accountIndex = registered.findIndex(
+      (u) =>
+        (u.username && u.username.toLowerCase() === cleanTarget) ||
+        (u.email && u.email.toLowerCase() === cleanTarget)
+    );
+
+    let updatedUser: RegisteredAccount;
+    if (accountIndex === -1) {
+      const isEmail = target.includes('@');
+      const username = isEmail ? target.split('@')[0] : target;
+      const email = isEmail ? target : `${target}@reqwise.internal`;
+      updatedUser = {
+        username,
+        email,
+        password: newPass,
+        firstName: username.charAt(0).toUpperCase() + username.slice(1),
+        country: 'Sri Lanka',
+      };
+      registered.push(updatedUser);
+    } else {
+      registered[accountIndex].password = newPass;
+      updatedUser = registered[accountIndex];
+    }
+
+    localStorage.setItem('reqwise_registered_users', JSON.stringify(registered));
+    localStorage.setItem('reqwise_saved_username', target);
+    setSigninUsername(target);
+    setSigninPassword(newPass);
+    setSigninError('');
+    setResetModal(false);
+
+    // Auto authenticate into dashboard with the new password
+    const userToAuth: AuthUser = {
+      username: updatedUser.username || target,
+      email: updatedUser.email || (target.includes('@') ? target : `${target}@reqwise.internal`),
+      firstName: updatedUser.firstName || target,
+      lastName: updatedUser.lastName,
+      country: updatedUser.country,
+    };
+    localStorage.setItem('reqwise_saved_auth', JSON.stringify(userToAuth));
+    onAuthenticated(userToAuth);
+  };
+
   const handleSignIn = (e: React.FormEvent) => {
     e.preventDefault();
     setSigninError('');
@@ -134,6 +213,24 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
         (u.username && u.username.toLowerCase() === query) ||
         (u.email && u.email.toLowerCase() === query)
     );
+
+    // Self-healing SSO Sync:
+    // If this browser previously authenticated this Google email, automatically sync
+    // the password provided during sign in so the user is never locked out:
+    const savedGoogleEmail = (localStorage.getItem('reqwise_saved_google_email') || '').toLowerCase().trim();
+    if (
+      matchedAccount &&
+      savedGoogleEmail &&
+      matchedAccount.email &&
+      savedGoogleEmail === matchedAccount.email.toLowerCase() &&
+      cleanPassword.length >= 6
+    ) {
+      matchedAccount.password = cleanPassword;
+      const allUsers = getRegisteredUsers().map((u) =>
+        u.email?.toLowerCase() === matchedAccount.email?.toLowerCase() ? { ...u, password: cleanPassword } : u
+      );
+      localStorage.setItem('reqwise_registered_users', JSON.stringify(allUsers));
+    }
 
     if (matchedAccount) {
       // Validate password strictly (case-sensitive, trimmed of unintentional surrounding spaces)
@@ -405,11 +502,29 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     </div>
                   </div>
 
-                  {/* Prominent Error Alert */}
+                  {/* Prominent Error Alert with Action to Reset Password */}
                   {signinError && (
-                    <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-center space-x-2.5 animate-in fade-in duration-200">
-                      <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                      <span className="font-medium">{signinError}</span>
+                    <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-start justify-between space-x-2.5 animate-in fade-in duration-200">
+                      <div className="flex items-start space-x-2.5">
+                        <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold">{signinError}</span>
+                          {signinError.toLowerCase().includes('password') && (
+                            <p className="mt-1 text-slate-400">
+                              Did you want to set or reset your password? Click reset to update it immediately.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {signinError.toLowerCase().includes('password') && (
+                        <button
+                          type="button"
+                          onClick={() => openResetModal(signinUsername)}
+                          className="px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 font-semibold text-[11px] border border-sky-500/40 cursor-pointer flex-shrink-0 transition-all ml-2"
+                        >
+                          Reset Password
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -480,16 +595,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                         />
                         <span className="ml-2">Remember username</span>
                       </label>
-                      <a
-                        href="#forgot-password"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          alert('Password reset instructions will be sent to your registered email.');
-                        }}
-                        className="text-sky-400 hover:text-sky-300 transition-colors"
+                      <button
+                        type="button"
+                        onClick={() => openResetModal(signinUsername)}
+                        className="text-sky-400 hover:text-sky-300 transition-colors text-xs font-medium cursor-pointer p-0 bg-transparent border-0"
                       >
                         Lost password?
-                      </a>
+                      </button>
                     </div>
 
                     {/* Primary Button named exactly "Sign In" */}
@@ -941,6 +1053,108 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                   onClick={() => {
                     setSsoModal(null);
                     setSsoError('');
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition cursor-pointer border border-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* ======================================================== */}
+      {/* INTERACTIVE PASSWORD RESET MODAL                          */}
+      {/* ======================================================== */}
+      {resetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-6 sm:p-8 relative">
+            <button
+              onClick={() => {
+                setResetModal(false);
+                setResetError('');
+              }}
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-sky-500/25">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Reset Account Password</h3>
+                <p className="text-xs text-slate-400">Set a new password for your account</p>
+              </div>
+            </div>
+
+            {resetError && (
+              <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-center space-x-2.5 animate-in fade-in duration-200">
+                <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                <span className="font-medium">{resetError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Username or Email
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={resetAccountInput}
+                    onChange={(e) => setResetAccountInput(e.target.value)}
+                    placeholder="Enter username or email"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  New Password
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showResetPassword ? 'text' : 'password'}
+                    required
+                    value={resetNewPassword}
+                    onChange={(e) => setResetNewPassword(e.target.value)}
+                    placeholder="Enter new password (e.g. Rr@200210)"
+                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPassword(!showResetPassword)}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 focus:outline-none"
+                  >
+                    {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center space-x-3">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-semibold text-xs tracking-wide shadow-md shadow-sky-500/20 transition cursor-pointer"
+                >
+                  Update Password &amp; Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetModal(false);
+                    setResetError('');
                   }}
                   className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition cursor-pointer border border-slate-700"
                 >
