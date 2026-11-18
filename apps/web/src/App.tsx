@@ -5,11 +5,24 @@ import { RtmWorkspace } from './components/RtmWorkspace';
 import { DiffWorkspace } from './components/DiffWorkspace';
 import { ScorecardWorkspace } from './components/ScorecardWorkspace';
 import { UploadModal } from './components/UploadModal';
+import { AuthPage } from './components/AuthPage';
 import { api } from './api/client';
-import { Workspace, Project, Document, DocumentVersion } from './types';
+import { Workspace, Project, Document, DocumentVersion, AuthUser } from './types';
 import { Sparkles, FileText, ArrowRight, Upload } from 'lucide-react';
 
 export const App: React.FC = () => {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    const saved = localStorage.getItem('reqwise_auth_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -76,6 +89,16 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSignOut = () => {
+    localStorage.removeItem('reqwise_auth_user');
+    setAuthUser(null);
+  };
+
+  // If user is not authenticated, render the ReqWise Sign In / Sign Up portal
+  if (!authUser) {
+    return <AuthPage onAuthenticated={(user) => setAuthUser(user)} />;
+  }
+
   if (isLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-400 font-mono text-sm">
@@ -97,6 +120,8 @@ export const App: React.FC = () => {
         currentDocumentTitle={activeDocument?.title || activeProject?.name}
         currentVersionLabel={activeVersion?.versionLabel}
         readinessIndex={activeVersion?.overallQualityScore ? Math.round(activeVersion.overallQualityScore) : undefined}
+        currentUser={authUser}
+        onSignOut={handleSignOut}
       />
 
       {/* Main Content Area */}

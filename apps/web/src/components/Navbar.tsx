@@ -1,5 +1,6 @@
 import React from 'react';
-import { FileText, GitCompare, Network, BarChart3, Upload, ShieldCheck, Sparkles } from 'lucide-react';
+import { FileText, GitCompare, Network, BarChart3, Upload, ShieldCheck, Sparkles, LogOut, User as UserIcon } from 'lucide-react';
+import { AuthUser } from '../types';
 
 interface NavbarProps {
   activeTab: 'canvas' | 'rtm' | 'diff' | 'scorecard';
@@ -8,6 +9,8 @@ interface NavbarProps {
   currentDocumentTitle?: string;
   currentVersionLabel?: string;
   readinessIndex?: number;
+  currentUser?: AuthUser | null;
+  onSignOut?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -17,6 +20,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentDocumentTitle,
   currentVersionLabel,
   readinessIndex,
+  currentUser,
+  onSignOut,
 }) => {
   return (
     <header className="h-16 border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 flex items-center justify-between sticky top-0 z-50">
@@ -116,6 +121,35 @@ export const Navbar: React.FC<NavbarProps> = ({
           <Upload className="w-4 h-4" />
           <span>Upload SRS</span>
         </button>
+
+        {/* User Profile & Sign Out */}
+        {currentUser && (
+          <div className="flex items-center space-x-3 pl-3 border-l border-slate-800">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-sky-400">
+                {currentUser.firstName ? currentUser.firstName.charAt(0).toUpperCase() : (currentUser.username ? currentUser.username.charAt(0).toUpperCase() : 'U')}
+              </div>
+              <div className="hidden xl:block text-left">
+                <p className="text-xs font-semibold text-slate-200 leading-tight">
+                  {currentUser.firstName ? `${currentUser.firstName} ${currentUser.lastName || ''}`.trim() : currentUser.username}
+                </p>
+                <p className="text-[10px] text-slate-400 font-mono truncate max-w-[120px]">
+                  {currentUser.email}
+                </p>
+              </div>
+            </div>
+
+            {onSignOut && (
+              <button
+                onClick={onSignOut}
+                title="Sign Out"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

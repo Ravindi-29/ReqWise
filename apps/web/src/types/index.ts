@@ -175,3 +175,11 @@ export interface PipelineProgressEvent {
   metadata?: Record<string, any>;
   timestamp: string;
 }
+
+export interface AuthUser {
+  username: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  country?: string;
+}

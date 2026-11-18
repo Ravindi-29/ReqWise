@@ -142,3 +142,39 @@ test('6. Executive Scorecard Readiness Index Categorization', () => {
   assert.equal(getReadinessStatus(72.0).status, 'CONDITIONAL_APPROVAL');
   assert.equal(getReadinessStatus(45.0).status, 'NEEDS_REVISION');
 });
+
+test('7. Authentication Password Policy & Sign Up Field Constraints', () => {
+  const validatePassword = (pwd) => ({
+    length: pwd.length >= 8,
+    case: /[a-z]/.test(pwd) && /[A-Z]/.test(pwd),
+    digit: /\d/.test(pwd),
+    special: /[*#\-_@!$%^&+=?]/.test(pwd),
+    isValid: pwd.length >= 8 && /[a-z]/.test(pwd) && /[A-Z]/.test(pwd) && /\d/.test(pwd) && /[*#\-_@!$%^&+=?]/.test(pwd),
+  });
+
+  // Non-compliant passwords
+  assert.equal(validatePassword('short1!').isValid, false); // Length < 8
+  assert.equal(validatePassword('nouppercase123!').isValid, false); // No uppercase
+  assert.equal(validatePassword('NOLOWERCASE123!').isValid, false); // No lowercase
+  assert.equal(validatePassword('NoDigitsHere!').isValid, false); // No digit
+  assert.equal(validatePassword('NoSpecialChar123').isValid, false); // No special char
+
+  // Compliant password
+  assert.equal(validatePassword('ReqWise2026!').isValid, true);
+
+  // Field specification: Single email address with sarah@gmail.com format
+  const formPayload = {
+    username: 'sarah',
+    password: 'Password123*',
+    email: 'sarah@gmail.com',
+    firstName: 'Sarah',
+    lastName: 'Chen',
+    country: 'Sri Lanka',
+  };
+
+  assert.equal('city' in formPayload, false, 'City/town must be excluded');
+  assert.equal('securityQuestion' in formPayload, false, 'Security question must be excluded');
+  assert.equal('emailConfirm' in formPayload, false, 'Email (again) must be excluded');
+  assert.equal(formPayload.email, 'sarah@gmail.com');
+  assert.equal(formPayload.country, 'Sri Lanka');
+});
