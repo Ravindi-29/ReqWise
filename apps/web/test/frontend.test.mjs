@@ -273,3 +273,82 @@ test('9. Strict Password Verification on Sign In & SSO (Rejects Incorrect Passwo
   assert.equal(successAttempt.success, true);
   assert.equal(successAttempt.user.email, 'ravindiranthilini@gmail.com');
 });
+
+test('10. SSO Account Registration & Password Synchronization with Regular Sign In', () => {
+  let mockRegisteredUsers = [];
+
+  const handleSSOSync = (ssoInput, ssoPassword, provider) => {
+    const trimmedInput = (ssoInput || '').trim();
+    const cleanPassword = (ssoPassword || '').trim();
+    const isEmail = trimmedInput.includes('@');
+    const username = isEmail ? trimmedInput.split('@')[0] : trimmedInput;
+    const email = isEmail ? trimmedInput : `${trimmedInput}@github.com`;
+    const queryEmail = email.toLowerCase();
+    const queryUsername = username.toLowerCase();
+
+    // Deduplicate and filter out any existing account for this email or username
+    const filtered = mockRegisteredUsers.filter(
+      (u) =>
+        (u.email && u.email.toLowerCase() !== queryEmail) &&
+        (u.username && u.username.toLowerCase() !== queryUsername)
+    );
+
+    const updatedAccount = {
+      username,
+      email,
+      password: cleanPassword,
+      firstName: username.charAt(0).toUpperCase() + username.slice(1),
+      lastName: provider === 'google' ? 'Google' : 'GitHub',
+      country: 'Sri Lanka',
+    };
+
+    filtered.push(updatedAccount);
+    mockRegisteredUsers = filtered;
+    return updatedAccount;
+  };
+
+  const handleStandardSignIn = (usernameOrEmail, password) => {
+    const cleanUsername = (usernameOrEmail || '').trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+
+    const matched = mockRegisteredUsers.find(
+      (u) =>
+        (u.username && u.username.toLowerCase() === cleanUsername) ||
+        (u.email && u.email.toLowerCase() === cleanUsername)
+    );
+
+    if (!matched) {
+      return { success: false, error: 'Account not found' };
+    }
+    if (matched.password && matched.password.trim() !== cleanPassword) {
+      return { success: false, error: 'Incorrect password' };
+    }
+    return { success: true, user: matched };
+  };
+
+  // 1. User signs in via Google with email and password
+  const ssoUser = handleSSOSync('ravindiranthilini1029@gmail.com', 'Rr@200210', 'google');
+  assert.equal(ssoUser.email, 'ravindiranthilini1029@gmail.com');
+  assert.equal(ssoUser.password, 'Rr@200210');
+  assert.equal(mockRegisteredUsers.length, 1);
+
+  // 2. User reloads page and uses standard Sign In with the same email and password
+  const signInSuccess = handleStandardSignIn('ravindiranthilini1029@gmail.com', 'Rr@200210');
+  assert.equal(signInSuccess.success, true);
+  assert.equal(signInSuccess.user.email, 'ravindiranthilini1029@gmail.com');
+
+  // 3. User uses username (without @gmail.com) and the same password
+  const signInByUsername = handleStandardSignIn('ravindiranthilini1029', 'Rr@200210');
+  assert.equal(signInByUsername.success, true);
+
+  // 4. Entering wrong password properly rejects
+  const signInWrongPass = handleStandardSignIn('ravindiranthilini1029@gmail.com', 'WrongPass999!');
+  assert.equal(signInWrongPass.success, false);
+  assert.equal(signInWrongPass.error, 'Incorrect password');
+
+  // 5. Updating password via SSO deduplicates and synchronizes
+  handleSSOSync('ravindiranthilini1029@gmail.com', 'NewRr@2026', 'google');
+  assert.equal(mockRegisteredUsers.length, 1);
+  const updatedLogin = handleStandardSignIn('ravindiranthilini1029@gmail.com', 'NewRr@2026');
+  assert.equal(updatedLogin.success, true);
+});

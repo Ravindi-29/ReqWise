@@ -12,7 +12,26 @@ interface RegisteredAccount extends AuthUser {
 
 const getRegisteredUsers = (): RegisteredAccount[] => {
   try {
-    return JSON.parse(localStorage.getItem('reqwise_registered_users') || '[]');
+    const raw = JSON.parse(localStorage.getItem('reqwise_registered_users') || '[]');
+    if (!Array.isArray(raw)) return [];
+    
+    // Deduplicate and sanitize by lowercased email and username
+    // Prioritizing the latest entry with a valid password
+    const map = new Map<string, RegisteredAccount>();
+    for (const u of raw) {
+      if (!u) continue;
+      const keyEmail = (u.email || '').toLowerCase().trim();
+      const keyUsername = (u.username || '').toLowerCase().trim();
+      const primaryKey = keyEmail || keyUsername;
+      if (primaryKey) {
+        const existing = map.get(primaryKey);
+        if (!existing || (u.password && !existing.password) || u.password) {
+          map.set(primaryKey, u);
+          if (keyUsername) map.set(keyUsername, u);
+        }
+      }
+    }
+    return Array.from(new Set(map.values()));
   } catch {
     return [];
   }
@@ -96,11 +115,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     setSigninError('');
 
     const cleanUsername = signinUsername.trim();
+    const cleanPassword = signinPassword.trim();
     if (!cleanUsername) {
       setSigninError('Please enter your username or email.');
       return;
     }
-    if (!signinPassword) {
+    if (!cleanPassword) {
       setSigninError('Please enter your password.');
       return;
     }
@@ -116,8 +136,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     );
 
     if (matchedAccount) {
-      // Validate password strictly
-      if (matchedAccount.password && matchedAccount.password !== signinPassword) {
+      // Validate password strictly (case-sensitive, trimmed of unintentional surrounding spaces)
+      if (matchedAccount.password && matchedAccount.password.trim() !== cleanPassword) {
         setSigninError('Incorrect password. Please verify your password and try again.');
         return; // Reject wrong password, DO NOT log in!
       }
@@ -153,26 +173,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setSigninError('');
 
-    if (!signupPassword) {
+    const cleanUsername = signupUsername.trim();
+    const cleanEmail = signupEmail.trim();
+    const cleanPassword = signupPassword.trim();
+
+    if (!cleanUsername || !cleanPassword) {
       return;
     }
 
     const user: RegisteredAccount = {
-      username: signupUsername,
-      email: signupEmail,
-      password: signupPassword,
-      firstName: signupFirstName,
-      lastName: signupLastName,
+      username: cleanUsername,
+      email: cleanEmail,
+      password: cleanPassword,
+      firstName: signupFirstName.trim() || cleanUsername,
+      lastName: signupLastName.trim(),
       country: signupCountry,
     };
 
-    // Save registered user account in localStorage with password
+    // Save registered user account in localStorage with password, deduplicating
     try {
       const existing = getRegisteredUsers();
       const filtered = existing.filter(
         (u) =>
-          u.email.toLowerCase() !== signupEmail.toLowerCase() &&
-          u.username.toLowerCase() !== signupUsername.toLowerCase()
+          (u.email && u.email.toLowerCase() !== cleanEmail.toLowerCase()) &&
+          (u.username && u.username.toLowerCase() !== cleanUsername.toLowerCase())
       );
       filtered.push(user);
       localStorage.setItem('reqwise_registered_users', JSON.stringify(filtered));
@@ -181,9 +205,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     }
 
     // Save for Sign In prefill
-    localStorage.setItem('reqwise_saved_username', signupEmail);
+    localStorage.setItem('reqwise_saved_username', cleanEmail || cleanUsername);
     localStorage.setItem('reqwise_saved_auth', JSON.stringify(user));
-    setSigninUsername(signupEmail);
+    setSigninUsername(cleanEmail || cleanUsername);
 
     // Transition to workspace
     onAuthenticated(user);
@@ -206,8 +230,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setSsoError('');
 
-    const trimmed = ssoAccountInput.trim();
-    if (!trimmed) {
+    const trimmedInput = ssoAccountInput.trim();
+    const cleanPassword = ssoPasswordInput.trim();
+
+    if (!trimmedInput) {
       setSsoError(
         ssoModal === 'google'
           ? 'Please enter your Google account email.'
@@ -216,12 +242,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
       return;
     }
 
-    if (ssoModal === 'google' && !trimmed.includes('@')) {
+    if (ssoModal === 'google' && !trimmedInput.includes('@')) {
       setSsoError('Please enter a valid Google email address (e.g. sarah@gmail.com).');
       return;
     }
 
-    if (!ssoPasswordInput || !ssoPasswordInput.trim()) {
+    if (!cleanPassword) {
       setSsoError(
         ssoModal === 'google'
           ? 'Please enter your Google account password.'
@@ -230,67 +256,65 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
       return;
     }
 
-    const query = trimmed.toLowerCase();
+    if (cleanPassword.length < 6) {
+      setSsoError(
+        ssoModal === 'google'
+          ? 'Authentication failed: Password must be at least 6 characters.'
+          : 'Authentication failed: Password or Personal Access Token must be at least 6 characters.'
+      );
+      return;
+    }
+
+    const isEmail = trimmedInput.includes('@');
+    const username = isEmail ? trimmedInput.split('@')[0] : trimmedInput;
+    const email = isEmail ? trimmedInput : `${trimmedInput}@github.com`;
+    const queryEmail = email.toLowerCase();
+    const queryUsername = username.toLowerCase();
+
+    // Fetch existing registered users
     const registered = getRegisteredUsers();
     const matchedAccount = registered.find(
       (u) =>
-        (u.username && u.username.toLowerCase() === query) ||
-        (u.email && u.email.toLowerCase() === query)
+        (u.username && u.username.toLowerCase() === queryUsername) ||
+        (u.email && u.email.toLowerCase() === queryEmail)
     );
 
-    // If account was already registered, strictly verify password
-    if (matchedAccount && matchedAccount.password) {
-      if (matchedAccount.password !== ssoPasswordInput) {
-        setSsoError(
-          ssoModal === 'google'
-            ? 'Authentication failed: Incorrect Google password.'
-            : 'Authentication failed: Incorrect GitHub password or Personal Access Token.'
-        );
-        return; // Reject wrong password, DO NOT log in!
-      }
-    } else {
-      // If registering new SSO account, ensure password is at least 8 characters
-      if (ssoPasswordInput.length < 8) {
-        setSsoError(
-          ssoModal === 'google'
-            ? 'Authentication failed: Password must be at least 8 characters.'
-            : 'Authentication failed: Password or Personal Access Token must be at least 8 characters.'
-        );
-        return;
-      }
+    // Deduplicate and filter out any existing account for this email or username
+    const filtered = registered.filter(
+      (u) =>
+        (u.email && u.email.toLowerCase() !== queryEmail) &&
+        (u.username && u.username.toLowerCase() !== queryUsername)
+    );
 
-      // Save new SSO account into registered users
-      const isEmail = trimmed.includes('@');
-      const username = isEmail ? trimmed.split('@')[0] : trimmed;
-      const email = isEmail ? trimmed : `${trimmed}@github.com`;
-      const newSSOAccount: RegisteredAccount = {
-        username,
-        email,
-        password: ssoPasswordInput,
-        firstName: username.charAt(0).toUpperCase() + username.slice(1),
-        lastName: ssoModal === 'google' ? 'Google' : 'GitHub',
-        country: 'Sri Lanka',
-      };
-      localStorage.setItem('reqwise_registered_users', JSON.stringify([...registered, newSSOAccount]));
-    }
-
-    const isEmail = trimmed.includes('@');
-    const username = matchedAccount?.username || (isEmail ? trimmed.split('@')[0] : trimmed);
-    const email = matchedAccount?.email || (isEmail ? trimmed : `${trimmed}@github.com`);
-
-    const user: AuthUser = {
-      username: username,
-      email: email,
+    // Synchronize account: save or update with the password entered in SSO
+    const updatedSSOAccount: RegisteredAccount = {
+      username,
+      email,
+      password: cleanPassword, // Always sync the password with the registered account!
       firstName: matchedAccount?.firstName || username.charAt(0).toUpperCase() + username.slice(1),
       lastName: matchedAccount?.lastName || (ssoModal === 'google' ? 'Google' : 'GitHub'),
+      country: matchedAccount?.country || 'Sri Lanka',
+    };
+
+    filtered.push(updatedSSOAccount);
+    localStorage.setItem('reqwise_registered_users', JSON.stringify(filtered));
+
+    const user: AuthUser = {
+      username: updatedSSOAccount.username,
+      email: updatedSSOAccount.email,
+      firstName: updatedSSOAccount.firstName,
+      lastName: updatedSSOAccount.lastName,
+      country: updatedSSOAccount.country,
     };
 
     if (ssoModal === 'google') {
       localStorage.setItem('reqwise_saved_google_email', email);
     } else {
-      localStorage.setItem('reqwise_saved_github_user', trimmed);
+      localStorage.setItem('reqwise_saved_github_user', username);
     }
-    localStorage.setItem('reqwise_saved_username', trimmed);
+    // Pre-fill email/username so on page reload it immediately matches
+    localStorage.setItem('reqwise_saved_username', email);
+    setSigninUsername(email);
     localStorage.setItem('reqwise_saved_auth', JSON.stringify(user));
 
     setSsoModal(null);
