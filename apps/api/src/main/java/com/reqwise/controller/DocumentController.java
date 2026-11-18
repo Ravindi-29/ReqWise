@@ -55,7 +55,6 @@ public class DocumentController {
     }
 
     @PostMapping(value = "/projects/{projectId}/documents/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Transactional
     @Operation(summary = "Upload an SRS specification (PDF or DOCX) and begin ingestion pipeline")
     public ResponseEntity<DocumentVersionResponse> uploadDocument(
             @PathVariable UUID projectId,
@@ -100,7 +99,7 @@ public class DocumentController {
             String docTitle = (title != null && !title.trim().isEmpty())
                     ? title.trim()
                     : originalFilename.replaceAll("\\.[^.]+$", "");
-            document = documentRepository.save(new Document(project, docTitle));
+            document = documentRepository.saveAndFlush(new Document(project, docTitle));
         }
 
         // Store file on local disk
@@ -119,9 +118,9 @@ public class DocumentController {
                 storedPath,
                 fileType
         );
-        DocumentVersion savedVersion = versionRepository.save(version);
+        DocumentVersion savedVersion = versionRepository.saveAndFlush(version);
 
-        // Trigger async parsing pipeline
+        // Trigger async parsing pipeline (entity is already committed & flushed)
         pipelineOrchestrator.executePipeline(savedVersion.getId());
 
         return ResponseEntity.status(HttpStatus.CREATED).body(DocumentVersionResponse.fromEntity(savedVersion));

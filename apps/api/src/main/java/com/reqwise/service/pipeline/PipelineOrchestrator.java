@@ -88,12 +88,28 @@ public class PipelineOrchestrator {
     public void executePipeline(UUID versionId) {
         logger.info("Starting processing pipeline for document version: {}", versionId);
 
-        DocumentVersion version = versionRepository.findById(versionId).orElse(null);
+        // Wait up to 3 seconds for database transaction commit from HTTP thread
+        DocumentVersion version = null;
+        for (int i = 0; i < 30; i++) {
+            version = versionRepository.findById(versionId).orElse(null);
+            if (version != null) {
+                break;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ignored) {}
+        }
+
         if (version == null) {
-            logger.error("Document version {} not found", versionId);
+            logger.error("Document version {} not found after timeout", versionId);
             sseService.fail(versionId, "Version not found: " + versionId);
             return;
         }
+
+        // Brief delay allowing client EventSource to attach before initial events stream
+        try {
+            Thread.sleep(250);
+        } catch (InterruptedException ignored) {}
 
         try {
             // ==========================================

@@ -46,6 +46,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const handleStartAnalysis = async () => {
     if (!file || !projectId) return;
 
+    let pollInterval: any = null;
+    let fallbackTimeout: any = null;
+    let unsubscribeStream: (() => void) | null = null;
+
+    const cleanup = () => {
+      if (pollInterval) clearInterval(pollInterval);
+      if (fallbackTimeout) clearTimeout(fallbackTimeout);
+      if (unsubscribeStream) unsubscribeStream();
+    };
+
     try {
       setIsUploading(true);
       setError(null);
@@ -54,25 +64,53 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const version = await api.uploadDocument(projectId, file);
 
       // 2. Subscribe to real-time Server-Sent Events (SSE)
-      api.subscribePipelineStream(
+      unsubscribeStream = api.subscribePipelineStream(
         version.id,
         (progress) => {
           setProgressEvent(progress);
         },
         (complete) => {
+          cleanup();
           setProgressEvent(complete);
           setTimeout(() => {
             setIsUploading(false);
             onVersionReady(version.id);
             onClose();
-          }, 1200);
+          }, 1000);
         },
         (err) => {
-          console.error('Pipeline SSE stream error:', err);
-          setError('Analysis encountered an interruption. Verifying backend state...');
+          console.error('Pipeline SSE stream error (fallback polling remains active):', err);
         }
       );
+
+      // 3. Fallback polling safety net (verifies state even if SSE disconnects)
+      pollInterval = setInterval(async () => {
+        try {
+          const v = await api.getVersion(version.id);
+          if (v.processingStatus === 'COMPLETED') {
+            cleanup();
+            setIsUploading(false);
+            onVersionReady(version.id);
+            onClose();
+          } else if (v.processingStatus === 'FAILED') {
+            cleanup();
+            setIsUploading(false);
+            setError('Specification analysis pipeline failed. Please check document formatting and try again.');
+          }
+        } catch (e) {
+          // Keep polling
+        }
+      }, 2000);
+
+      // 4. Maximum timeout guard (60 seconds)
+      fallbackTimeout = setTimeout(() => {
+        cleanup();
+        setIsUploading(false);
+        setError('Analysis timed out. Please check server logs or retry.');
+      }, 60000);
+
     } catch (err: any) {
+      cleanup();
       console.error('Upload failure:', err);
       setError(err.message || 'Failed to initiate document ingestion');
       setIsUploading(false);
