@@ -6,6 +6,18 @@ interface AuthPageProps {
   onAuthenticated: (user: AuthUser) => void;
 }
 
+interface RegisteredAccount extends AuthUser {
+  password?: string;
+}
+
+const getRegisteredUsers = (): RegisteredAccount[] => {
+  try {
+    return JSON.parse(localStorage.getItem('reqwise_registered_users') || '[]');
+  } catch {
+    return [];
+  }
+};
+
 export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
   // Load saved state from localStorage (preserving what user did before)
   const [view, setView] = useState<'signin' | 'signup'>(() => {
@@ -22,7 +34,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     return localStorage.getItem('reqwise_remember_flag') === 'true';
   });
   const [signinError, setSigninError] = useState('');
-  const [successBanner, setSuccessBanner] = useState('');
 
   // Sign Up Form State with preserved saved values
   const [signupUsername, setSignupUsername] = useState(() => {
@@ -72,7 +83,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     if (signupCountry) localStorage.setItem('reqwise_draft_country', signupCountry);
   }, [signupUsername, signupEmail, signupFirstName, signupLastName, signupCountry]);
 
-  // Password Validation Rules
+  // Password Validation Rules for Sign Up
   const passwordRules = {
     length: signupPassword.length >= 8,
     case: /[a-z]/.test(signupPassword) && /[A-Z]/.test(signupPassword),
@@ -84,7 +95,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setSigninError('');
 
-    if (!signinUsername.trim()) {
+    const cleanUsername = signinUsername.trim();
+    if (!cleanUsername) {
       setSigninError('Please enter your username or email.');
       return;
     }
@@ -93,10 +105,32 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
       return;
     }
 
+    const query = cleanUsername.toLowerCase();
+    const registered = getRegisteredUsers();
+
+    // Verify credentials against registered accounts
+    const matchedAccount = registered.find(
+      (u) =>
+        (u.username && u.username.toLowerCase() === query) ||
+        (u.email && u.email.toLowerCase() === query)
+    );
+
+    if (matchedAccount) {
+      // Validate password strictly
+      if (matchedAccount.password && matchedAccount.password !== signinPassword) {
+        setSigninError('Incorrect password. Please verify your password and try again.');
+        return; // Reject wrong password, DO NOT log in!
+      }
+    } else {
+      // If not registered yet, display error
+      setSigninError('No account found with this username or email. Please click "Create new account" below.');
+      return; // Reject un-registered user, DO NOT log in!
+    }
+
     // Save what user did before
-    localStorage.setItem('reqwise_saved_username', signinUsername);
+    localStorage.setItem('reqwise_saved_username', cleanUsername);
     if (rememberMe) {
-      localStorage.setItem('reqwise_remember_username', signinUsername);
+      localStorage.setItem('reqwise_remember_username', cleanUsername);
       localStorage.setItem('reqwise_remember_flag', 'true');
     } else {
       localStorage.removeItem('reqwise_remember_username');
@@ -104,9 +138,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     }
 
     const user: AuthUser = {
-      username: signinUsername,
-      email: signinUsername.includes('@') ? signinUsername : `${signinUsername}@reqwise.internal`,
-      firstName: signinUsername,
+      username: matchedAccount.username || cleanUsername,
+      email: matchedAccount.email || (cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@reqwise.internal`),
+      firstName: matchedAccount.firstName || cleanUsername,
+      lastName: matchedAccount.lastName,
+      country: matchedAccount.country,
     };
 
     localStorage.setItem('reqwise_saved_auth', JSON.stringify(user));
@@ -117,26 +153,37 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
     e.preventDefault();
     setSigninError('');
 
-    const user: AuthUser = {
+    if (!signupPassword) {
+      return;
+    }
+
+    const user: RegisteredAccount = {
       username: signupUsername,
       email: signupEmail,
+      password: signupPassword,
       firstName: signupFirstName,
       lastName: signupLastName,
       country: signupCountry,
     };
 
-    // Save registered user account in localStorage
+    // Save registered user account in localStorage with password
     try {
-      const existing = JSON.parse(localStorage.getItem('reqwise_registered_users') || '[]');
-      localStorage.setItem('reqwise_registered_users', JSON.stringify([...existing, { ...user, password: signupPassword }]));
+      const existing = getRegisteredUsers();
+      const filtered = existing.filter(
+        (u) =>
+          u.email.toLowerCase() !== signupEmail.toLowerCase() &&
+          u.username.toLowerCase() !== signupUsername.toLowerCase()
+      );
+      filtered.push(user);
+      localStorage.setItem('reqwise_registered_users', JSON.stringify(filtered));
     } catch {
-      localStorage.setItem('reqwise_registered_users', JSON.stringify([{ ...user, password: signupPassword }]));
+      localStorage.setItem('reqwise_registered_users', JSON.stringify([user]));
     }
 
     // Save for Sign In prefill
-    localStorage.setItem('reqwise_saved_username', signupUsername);
+    localStorage.setItem('reqwise_saved_username', signupEmail);
     localStorage.setItem('reqwise_saved_auth', JSON.stringify(user));
-    setSigninUsername(signupUsername);
+    setSigninUsername(signupEmail);
 
     // Transition to workspace
     onAuthenticated(user);
@@ -174,18 +221,70 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
       return;
     }
 
+    if (!ssoPasswordInput || !ssoPasswordInput.trim()) {
+      setSsoError(
+        ssoModal === 'google'
+          ? 'Please enter your Google account password.'
+          : 'Please enter your GitHub password or Personal Access Token.'
+      );
+      return;
+    }
+
+    const query = trimmed.toLowerCase();
+    const registered = getRegisteredUsers();
+    const matchedAccount = registered.find(
+      (u) =>
+        (u.username && u.username.toLowerCase() === query) ||
+        (u.email && u.email.toLowerCase() === query)
+    );
+
+    // If account was already registered, strictly verify password
+    if (matchedAccount && matchedAccount.password) {
+      if (matchedAccount.password !== ssoPasswordInput) {
+        setSsoError(
+          ssoModal === 'google'
+            ? 'Authentication failed: Incorrect Google password.'
+            : 'Authentication failed: Incorrect GitHub password or Personal Access Token.'
+        );
+        return; // Reject wrong password, DO NOT log in!
+      }
+    } else {
+      // If registering new SSO account, ensure password is at least 8 characters
+      if (ssoPasswordInput.length < 8) {
+        setSsoError(
+          ssoModal === 'google'
+            ? 'Authentication failed: Password must be at least 8 characters.'
+            : 'Authentication failed: Password or Personal Access Token must be at least 8 characters.'
+        );
+        return;
+      }
+
+      // Save new SSO account into registered users
+      const isEmail = trimmed.includes('@');
+      const username = isEmail ? trimmed.split('@')[0] : trimmed;
+      const email = isEmail ? trimmed : `${trimmed}@github.com`;
+      const newSSOAccount: RegisteredAccount = {
+        username,
+        email,
+        password: ssoPasswordInput,
+        firstName: username.charAt(0).toUpperCase() + username.slice(1),
+        lastName: ssoModal === 'google' ? 'Google' : 'GitHub',
+        country: 'Sri Lanka',
+      };
+      localStorage.setItem('reqwise_registered_users', JSON.stringify([...registered, newSSOAccount]));
+    }
+
     const isEmail = trimmed.includes('@');
-    const username = isEmail ? trimmed.split('@')[0] : trimmed;
-    const email = isEmail ? trimmed : `${trimmed}@github.com`;
+    const username = matchedAccount?.username || (isEmail ? trimmed.split('@')[0] : trimmed);
+    const email = matchedAccount?.email || (isEmail ? trimmed : `${trimmed}@github.com`);
 
     const user: AuthUser = {
       username: username,
       email: email,
-      firstName: username.charAt(0).toUpperCase() + username.slice(1),
-      lastName: ssoModal === 'google' ? 'Google' : 'GitHub',
+      firstName: matchedAccount?.firstName || username.charAt(0).toUpperCase() + username.slice(1),
+      lastName: matchedAccount?.lastName || (ssoModal === 'google' ? 'Google' : 'GitHub'),
     };
 
-    // Save credentials in localStorage
     if (ssoModal === 'google') {
       localStorage.setItem('reqwise_saved_google_email', email);
     } else {
@@ -226,6 +325,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
             type="button"
             onClick={() => {
               setView('signin');
+              setSigninError('');
               localStorage.setItem('reqwise_saved_view', 'signin');
             }}
             className={`px-3.5 py-1.5 rounded-lg font-medium transition-all ${
@@ -240,6 +340,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
             type="button"
             onClick={() => {
               setView('signup');
+              setSigninError('');
               localStorage.setItem('reqwise_saved_view', 'signup');
             }}
             className={`px-3.5 py-1.5 rounded-lg font-medium transition-all ${
@@ -280,11 +381,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     </div>
                   </div>
 
-                  {/* Optional Error Alert */}
+                  {/* Prominent Error Alert */}
                   {signinError && (
-                    <div className="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-xs text-red-300 flex items-center space-x-2">
+                    <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-center space-x-2.5 animate-in fade-in duration-200">
                       <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                      <span>{signinError}</span>
+                      <span className="font-medium">{signinError}</span>
                     </div>
                   )}
 
@@ -301,14 +402,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                           type="text"
                           required
                           value={signinUsername}
-                          onChange={(e) => setSigninUsername(e.target.value)}
+                          onChange={(e) => {
+                            setSigninUsername(e.target.value);
+                            setSigninError('');
+                          }}
                           placeholder="Username or email"
                           className="w-full pl-10 pr-4 py-3 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
                         />
                       </div>
                     </div>
 
-                    {/* Password */}
+                    {/* Password with Error Highlight */}
                     <div>
                       <label className="sr-only">Password</label>
                       <div className="relative">
@@ -319,9 +423,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                           type={showSigninPassword ? 'text' : 'password'}
                           required
                           value={signinPassword}
-                          onChange={(e) => setSigninPassword(e.target.value)}
+                          onChange={(e) => {
+                            setSigninPassword(e.target.value);
+                            setSigninError('');
+                          }}
                           placeholder="Password"
-                          className="w-full pl-10 pr-10 py-3 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
+                          className={`w-full pl-10 pr-10 py-3 rounded-xl bg-slate-950/80 border ${
+                            signinError.toLowerCase().includes('password')
+                              ? 'border-red-500 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
+                              : 'border-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20'
+                          } text-slate-100 placeholder-slate-500 focus:outline-none text-sm transition-all`}
                         />
                         <button
                           type="button"
@@ -375,6 +486,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     type="button"
                     onClick={() => {
                       setView('signup');
+                      setSigninError('');
                       localStorage.setItem('reqwise_saved_view', 'signup');
                     }}
                     className="ml-1.5 text-sky-400 hover:text-sky-300 font-semibold cursor-pointer underline underline-offset-4 focus:outline-none"
@@ -384,7 +496,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                 </div>
               </div>
 
-              {/* Right Column: Third-Party SSO (Opens account input modal, NO auto-login) */}
+              {/* Right Column: Third-Party SSO (Opens account input modal, strictly requires credentials) */}
               <div className="md:col-span-5 bg-slate-950/60 p-6 sm:p-8 lg:p-10 flex flex-col justify-between border-t md:border-t-0 md:border-l border-slate-800">
                 <div>
                   <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-5 text-center md:text-left">
@@ -428,6 +540,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                       type="button"
                       onClick={() => {
                         setView('signup');
+                        setSigninError('');
                         localStorage.setItem('reqwise_saved_view', 'signup');
                       }}
                       className="text-sky-400 hover:text-sky-300 underline font-medium cursor-pointer inline p-0 m-0 border-0 bg-transparent"
@@ -473,6 +586,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     type="button"
                     onClick={() => {
                       setView('signin');
+                      setSigninError('');
                       localStorage.setItem('reqwise_saved_view', 'signin');
                     }}
                     title="Back to Sign In"
@@ -653,6 +767,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     type="button"
                     onClick={() => {
                       setView('signin');
+                      setSigninError('');
                       localStorage.setItem('reqwise_saved_view', 'signin');
                     }}
                     className="py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition duration-150 cursor-pointer border border-slate-700"
@@ -669,6 +784,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                   type="button"
                   onClick={() => {
                     setView('signin');
+                    setSigninError('');
                     localStorage.setItem('reqwise_saved_view', 'signin');
                   }}
                   className="text-sky-400 hover:text-sky-300 font-semibold underline underline-offset-4 cursor-pointer ml-1"
@@ -684,7 +800,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
 
       {/* ======================================================== */}
       {/* INTERACTIVE SSO ACCOUNT AUTHENTICATION MODAL              */}
-      {/* Prompts user for their real account credentials           */}
+      {/* Strictly validates password and credentials               */}
       {/* ======================================================== */}
       {ssoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
@@ -732,9 +848,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
 
             {/* Error Message */}
             {ssoError && (
-              <div className="mb-4 p-3 rounded-xl bg-red-950/50 border border-red-800/60 text-xs text-red-300 flex items-center space-x-2">
+              <div className="mb-4 p-3.5 rounded-xl bg-red-950/60 border border-red-800/80 text-xs text-red-300 flex items-center space-x-2.5 animate-in fade-in duration-200">
                 <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                <span>{ssoError}</span>
+                <span className="font-medium">{ssoError}</span>
               </div>
             )}
 
@@ -753,7 +869,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                     required
                     autoFocus
                     value={ssoAccountInput}
-                    onChange={(e) => setSsoAccountInput(e.target.value)}
+                    onChange={(e) => {
+                      setSsoAccountInput(e.target.value);
+                      setSsoError('');
+                    }}
                     placeholder={ssoModal === 'google' ? 'sarah@gmail.com' : 'sarah-chen or sarah@enterprise.io'}
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
                   />
@@ -762,7 +881,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  {ssoModal === 'google' ? 'Password' : 'Password or Personal Access Token'}
+                  {ssoModal === 'google' ? 'Google Password' : 'Password or Personal Access Token'}
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -770,10 +889,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onAuthenticated }) => {
                   </div>
                   <input
                     type="password"
+                    required
                     value={ssoPasswordInput}
-                    onChange={(e) => setSsoPasswordInput(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm transition-all"
+                    onChange={(e) => {
+                      setSsoPasswordInput(e.target.value);
+                      setSsoError('');
+                    }}
+                    placeholder={ssoModal === 'google' ? 'Enter Google password' : 'Enter password or access token'}
+                    className={`w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-950 border ${
+                      ssoError.toLowerCase().includes('password') || ssoError.toLowerCase().includes('token')
+                        ? 'border-red-500 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
+                        : 'border-slate-800 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20'
+                    } text-slate-100 placeholder-slate-500 focus:outline-none text-sm transition-all`}
                   />
                 </div>
               </div>

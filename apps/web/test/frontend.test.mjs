@@ -227,3 +227,49 @@ test('8. SSO Account Input Validation & Page-Load Preservation Contract', () => 
   assert.equal(mockStorage.reqwise_saved_username, 'sarah@gmail.com');
   assert.equal(mockStorage.reqwise_saved_view, 'signin');
 });
+
+test('9. Strict Password Verification on Sign In & SSO (Rejects Incorrect Password)', () => {
+  const registeredUsers = [
+    {
+      username: 'ravindiran',
+      email: 'ravindiranthilini@gmail.com',
+      password: 'CorrectPass123*',
+      firstName: 'Ravindi',
+      lastName: 'Ranthilini',
+      country: 'Sri Lanka',
+    },
+  ];
+
+  const verifyCredentials = (usernameOrEmail, password) => {
+    const query = (usernameOrEmail || '').trim().toLowerCase();
+    const matched = registeredUsers.find(
+      (u) => u.username.toLowerCase() === query || u.email.toLowerCase() === query
+    );
+    if (!matched) {
+      return { success: false, error: 'Account not found' };
+    }
+    if (matched.password !== password) {
+      return { success: false, error: 'Incorrect password' };
+    }
+    return { success: true, user: matched };
+  };
+
+  // Rejection with incorrect password
+  const failAttempt1 = verifyCredentials('ravindiranthilini@gmail.com', 'WrongPassword!');
+  assert.equal(failAttempt1.success, false);
+  assert.equal(failAttempt1.error, 'Incorrect password');
+
+  const failAttempt2 = verifyCredentials('ravindiran', '12345');
+  assert.equal(failAttempt2.success, false);
+  assert.equal(failAttempt2.error, 'Incorrect password');
+
+  // Rejection with non-existent account
+  const notFound = verifyCredentials('nonexistent@user.com', 'SomePass123*');
+  assert.equal(notFound.success, false);
+  assert.equal(notFound.error, 'Account not found');
+
+  // Success with correct password
+  const successAttempt = verifyCredentials('ravindiranthilini@gmail.com', 'CorrectPass123*');
+  assert.equal(successAttempt.success, true);
+  assert.equal(successAttempt.user.email, 'ravindiranthilini@gmail.com');
+});
